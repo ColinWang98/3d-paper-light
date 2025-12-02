@@ -22,18 +22,16 @@ function initThreeJS() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   document.getElementById('canvas-container').appendChild(renderer.domElement);
   
-  // 1. 环境光：提供基础亮度
+  // 1. 环境光
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
   scene.add(ambientLight);
 
-  // 2. 定向光 (主光源)：修正为从前往后照射
-  // 位置设在 Z=10 (正前方)，指向原点
+  // 2. 定向光 (前向后)
   const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
-  dirLight.position.set(2, 2, 10); 
-  dirLight.lookAt(0, 0, 0);
+  dirLight.position.set(0, 2, 10); 
   scene.add(dirLight);
 
-  // 监听滚轮缩放
+  // 滚轮缩放
   window.addEventListener('wheel', (e) => {
     targetZoom += e.deltaY * 0.005; 
     targetZoom = Math.max(2, Math.min(15, targetZoom));
@@ -50,11 +48,11 @@ function initThreeJS() {
 function animate() {
   requestAnimationFrame(animate);
 
-  // 缩放平滑插值
+  // 缩放插值
   currentZoom += (targetZoom - currentZoom) * 0.1;
   camera.position.z = currentZoom;
 
-  // 视差控制
+  // 视差效果
   camera.position.x += (headX * 2 - camera.position.x) * 0.1;
   camera.position.y += (headY * 2 - camera.position.y) * 0.1;
   camera.lookAt(0, 0, 0);
@@ -69,7 +67,7 @@ setTimeout(() => {
   if (window.FaceMesh) initFaceTracking(window.FaceMesh);
   else {
     document.addEventListener('mousemove', (e) => {
-      headX = (e.clientX / window.innerWidth - 0.5) * 2;
+      headX = -(e.clientX / window.innerWidth - 0.5) * 2;
       headY = -(e.clientY / window.innerHeight - 0.5) * 2;
     });
   }
@@ -154,7 +152,7 @@ async function handleDrop(e) {
   const sourceLayer = globalLayers[draggedIndex];
   this.style.opacity = '0.5';
   
-  // 执行合并
+  // 合并
   const newMaskUrl = await mergeMaskImages(targetLayer.maskUrl, sourceLayer.maskUrl);
   targetLayer.maskUrl = newMaskUrl;
   targetLayer.isMerged = true;
@@ -162,7 +160,7 @@ async function handleDrop(e) {
   renderLayerList();
 }
 
-// === 核心修复：合并图片的逻辑 ===
+// === 核心修复：二值化合并 Mask ===
 function mergeMaskImages(url1, url2) {
   return new Promise((resolve) => {
     const canvas = document.createElement('canvas');
@@ -174,16 +172,27 @@ function mergeMaskImages(url1, url2) {
     
     img1.src = url1;
     img1.onload = () => {
-      // 1. 绘制第一张 Mask
+      // 1. 画第一张
       ctx.drawImage(img1, 0, 0, 512, 512);
       
       img2.src = url2;
       img2.onload = () => {
-        // 2. 关键修改：使用 'screen' (滤色) 模式
-        // 效果：白 + 黑 = 白；白 + 白 = 白。
-        // 这样两个 Mask 的白色区域（有效区域）会合并在一起，而不会被黑色背景覆盖。
-        ctx.globalCompositeOperation = 'screen'; 
+        // 2. 使用 lighter 模式叠加 (白+黑=白)
+        ctx.globalCompositeOperation = 'lighter'; 
         ctx.drawImage(img2, 0, 0, 512, 512);
+        
+        // 3. 二值化：强制把所有非黑像素变成纯白 (255)
+        const imgData = ctx.getImageData(0, 0, 512, 512);
+        const data = imgData.data;
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i] > 10) { // 只要有一点亮度
+            data[i] = 255;     
+            data[i+1] = 255;   
+            data[i+2] = 255;   
+            data[i+3] = 255;   
+          }
+        }
+        ctx.putImageData(imgData, 0, 0);
         
         resolve(canvas.toDataURL('image/png'));
       };
@@ -247,20 +256,15 @@ generateBtn.addEventListener('click', async () => {
 
 document.getElementById('fileInput').addEventListener('change', () => generateBtn.click());
 
-// ================= 5. 3D 生成 (光源方向修正版) =================
+// ================= 5. 3D 生成 (低阈值修复版) =================
 function create3DFromLayers(layers, originalBase64) {
   while(scene.children.length > 0) scene.remove(scene.children[0]);
   
-  // 重新添加灯光
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
   scene.add(ambientLight);
-  
-  // 定向光从前向后 (Z = 10 -> 0)
   const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
   dirLight.position.set(0, 2, 10);
   scene.add(dirLight);
-
-  // 移除了背光板 (backLight)，因为光是从前往后的
 
   const originalImg = new Image();
   originalImg.src = originalBase64.startsWith('data') ? originalBase64 : `data:image/jpeg;base64,${originalBase64}`;
@@ -289,11 +293,11 @@ function create3DFromLayers(layers, originalBase64) {
         
         let hasContent = false;
         for(let i=0; i<mData.data.length; i+=4) {
-           if(mData.data[i] > 100) {
+           // === 关键：阈值 > 10，防止黑边 ===
+           if(mData.data[i] > 10) {
              lData.data[i] = originalData.data[i];     
              lData.data[i+1] = originalData.data[i+1]; 
              lData.data[i+2] = originalData.data[i+2]; 
-             // 透明度设为 255 (完全不透明)，因为是从前往后照，不需要透光感，需要遮挡感
              lData.data[i+3] = 255; 
              hasContent = true;
            } else {
@@ -319,12 +323,12 @@ function create3DFromLayers(layers, originalBase64) {
         
         mesh.position.z = index * 0.3;
         
-        // 阴影设置：阴影投射在物体后方
+        // 阴影
         const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.5 });
         const shadow = new THREE.Mesh(geo, shadowMat);
         shadow.position.z = mesh.position.z - 0.05;
-        shadow.position.x = 0.05; // 投影向右偏
-        shadow.position.y = -0.05; // 投影向下偏
+        shadow.position.x = 0.05; 
+        shadow.position.y = -0.05;
         
         scene.add(shadow);
         scene.add(mesh);
