@@ -5,6 +5,8 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI 3D 纸雕灯生成器</title>
+    <!-- 关键修复：通过 CDN 引入 MediaPipe FaceMesh，避免 Vite 打包错误 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
     <!-- 引入样式文件 -->
     <link rel="stylesheet" href="./style.css">
   </head>
@@ -22,13 +24,13 @@
         <button id="generateBtn">✨ 生成 3D 纸雕</button>
       </div>
       
-      <p class="tip">提示：移动鼠标或摇头(需摄像头)可查看视差效果</p>
+      <p class="tip">提示：生成后，正对摄像头缓慢摇头，即可体验三维视差效果（如无摄像头则用鼠标滑动）。</p>
     </div>
 
-    <!-- 加载提示 -->
+    <!-- 加载动画容器 -->
     <div id="loading">
       <div class="spinner"></div>
-      <p id="loadingText">正在加载 AI 模型 (首次需下载 40MB)...</p>
+      <p id="loadingText">正在准备中...</p>
     </div>
 
     <!-- 3D 画布容器 -->

@@ -7,7 +7,6 @@ let headX = 0, headY = 0;
 // ================= 1. 初始化 Three.js 场景 =================
 function initThreeJS() {
   scene = new THREE.Scene();
-  // 黑色背景 + 雾气
   scene.fog = new THREE.FogExp2(0x000000, 0.01);
 
   camera = new THREE.PerspectiveCamera(
@@ -40,7 +39,6 @@ function initThreeJS() {
 function animate() {
   requestAnimationFrame(animate);
 
-  // 头部控制相机 (带平滑效果)
   camera.position.x += (headX * 2 - camera.position.x) * 0.1;
   camera.position.y += (headY * 2 - camera.position.y) * 0.1;
   camera.lookAt(0, 0, 0);
@@ -51,23 +49,17 @@ function animate() {
 // 启动 Three.js
 initThreeJS();
 
-// ================= 2. 摄像头头部追踪 (动态加载修复版) =================
-// 只有当页面完全加载后，才去加载 MediaPipe，避免阻塞
-setTimeout(() => {
-  import('@mediapipe/face_mesh').then((module) => {
-    const FaceMesh = module.FaceMesh;
-    initFaceTracking(FaceMesh);
-  }).catch(err => {
-    console.log('MediaPipe 加载跳过或失败 (可能是本地环境):', err);
-    // 如果没有摄像头，fallback 到鼠标控制 (可选)
-    document.addEventListener('mousemove', (e) => {
-      headX = (e.clientX / window.innerWidth) * 2 - 1;
-      headY = -(e.clientY / window.innerHeight) * 2 + 1;
-    });
-  });
-}, 1000);
+// ================= 2. 摄像头头部追踪 (CDN 引入修复版) =================
+function waitForFaceMesh() {
+  if (window.FaceMesh) {
+    initFaceTracking(window.FaceMesh);
+  } else {
+    setTimeout(waitForFaceMesh, 500);
+  }
+}
+waitForFaceMesh();
 
-function initFaceTracking(FaceMesh) {
+function initFaceTracking(FaceMeshClass) {
   const video = document.createElement('video');
   video.autoplay = true;
   video.playsInline = true;
@@ -81,9 +73,13 @@ function initFaceTracking(FaceMesh) {
     })
     .catch((err) => {
       console.warn('无法访问摄像头，降级为鼠标控制');
+      document.addEventListener('mousemove', (e) => {
+        headX = (e.clientX / window.innerWidth - 0.5) * 2;
+        headY = -(e.clientY / window.innerHeight - 0.5) * 2;
+      });
     });
 
-  const faceMesh = new FaceMesh({
+  const faceMesh = new FaceMeshClass({
     locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`,
   });
 
@@ -114,7 +110,7 @@ function initFaceTracking(FaceMesh) {
   };
 }
 
-// ================= 3. 调用 SAM-2 API 逻辑 =================
+// ================= 3. 调用 API 逻辑 =================
 const generateBtn = document.getElementById('generateBtn');
 
 if (generateBtn) {
@@ -125,7 +121,7 @@ if (generateBtn) {
     const loadingEl = document.getElementById('loading');
     const loadingText = document.getElementById('loadingText');
     loadingEl.style.display = 'block';
-    loadingText.innerText = '正在上传并调用 SAM-2 AI 分割...';
+    loadingText.innerText = '正在上传并调用 AI 分割...';
 
     const file = fileInput.files[0];
     const formData = new FormData();
@@ -138,13 +134,12 @@ if (generateBtn) {
       });
 
       const text = await response.text();
-      
       let data;
       try {
         data = JSON.parse(text);
       } catch (e) {
         console.error('Raw Response:', text);
-        throw new Error('后端返回无效，请查看控制台日志');
+        throw new Error('后端返回无效，请查看 Vercel Logs');
       }
 
       if (data.success && data.masks && data.masks.length > 0) {
@@ -182,57 +177,73 @@ function createSAMLayers(masks, originalImageBase64) {
   }
   
   originalImg.onload = () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 512;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(originalImg, 0, 0, 512, 512);
-    const originalData = ctx.getImageData(0, 0, 512, 512);
+    const width = originalImg.width;
+    const height = originalImg.height;
+    
+    const baseCanvas = document.createElement('canvas');
+    baseCanvas.width = width;
+    baseCanvas.height = height;
+    const baseCtx = baseCanvas.getContext('2d');
+    baseCtx.drawImage(originalImg, 0, 0, width, height);
+    const originalData = baseCtx.getImageData(0, 0, width, height);
 
-    masks.forEach((mask, index) => {
-      const layerCanvas = document.createElement('canvas');
-      layerCanvas.width = 512;
-      layerCanvas.height = 512;
-      const layerCtx = layerCanvas.getContext('2d');
-      const layerData = layerCtx.createImageData(512, 512);
+    const validMasks = masks.slice(0, 8); // 最多 8 层
 
-      for (let i = 0; i < mask.length; i++) {
-        const pixelIndex = i * 4;
-        if (mask[i] > 0) { 
-          layerData.data[pixelIndex] = originalData.data[pixelIndex];     
-          layerData.data[pixelIndex + 1] = originalData.data[pixelIndex + 1]; 
-          layerData.data[pixelIndex + 2] = originalData.data[pixelIndex + 2]; 
-          layerData.data[pixelIndex + 3] = 255; 
-        } else {
-          layerData.data[pixelIndex + 3] = 0; 
+    validMasks.forEach((maskItem, index) => {
+      const maskUrl = typeof maskItem === 'string' ? maskItem : maskItem.segmentation;
+      if (!maskUrl) return;
+
+      const maskImg = new Image();
+      maskImg.crossOrigin = "Anonymous";
+      maskImg.src = maskUrl;
+
+      maskImg.onload = () => {
+        const layerCanvas = document.createElement('canvas');
+        layerCanvas.width = width;
+        layerCanvas.height = height;
+        const layerCtx = layerCanvas.getContext('2d');
+        
+        layerCtx.drawImage(maskImg, 0, 0, width, height);
+        
+        const maskData = layerCtx.getImageData(0, 0, width, height);
+        const layerData = layerCtx.createImageData(width, height);
+
+        for (let i = 0; i < maskData.data.length; i += 4) {
+          if (maskData.data[i] > 128) { // 白色区域
+            layerData.data[i] = originalData.data[i];     
+            layerData.data[i + 1] = originalData.data[i + 1]; 
+            layerData.data[i + 2] = originalData.data[i + 2]; 
+            layerData.data[i + 3] = 255; 
+          } else {
+            layerData.data[i + 3] = 0; 
+          }
         }
-      }
 
-      layerCtx.putImageData(layerData, 0, 0);
+        layerCtx.putImageData(layerData, 0, 0);
 
-      const texture = new THREE.CanvasTexture(layerCanvas);
-      texture.colorSpace = THREE.SRGBColorSpace;
+        const texture = new THREE.CanvasTexture(layerCanvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
 
-      const material = new THREE.MeshBasicMaterial({
-        map: texture,
-        transparent: true,
-        side: THREE.DoubleSide,
-        alphaTest: 0.1, 
-      });
+        const material = new THREE.MeshBasicMaterial({
+          map: texture,
+          transparent: true,
+          side: THREE.DoubleSide,
+          alphaTest: 0.1, 
+        });
 
-      const geometry = new THREE.PlaneGeometry(4, 4);
-      const mesh = new THREE.Mesh(geometry, material);
-      
-      mesh.position.z = index * 0.5; 
-      
-      const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3 });
-      const shadow = new THREE.Mesh(geometry, shadowMat);
-      shadow.position.z = mesh.position.z - 0.1;
-      shadow.position.x = 0.05;
-      shadow.position.y = -0.05;
+        const aspect = width / height;
+        const geometry = new THREE.PlaneGeometry(4 * aspect, 4);
+        const mesh = new THREE.Mesh(geometry, material);
+        
+        mesh.position.z = index * 0.5; 
+        
+        const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3 });
+        const shadow = new THREE.Mesh(geometry, shadowMat);
+        shadow.position.z = mesh.position.z - 0.1;
 
-      scene.add(shadow);
-      scene.add(mesh);
+        scene.add(shadow);
+        scene.add(mesh);
+      };
     });
   };
 }
