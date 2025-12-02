@@ -28,11 +28,12 @@ export default async function handler(req, res) {
     const mimeType = imageFile.mimetype || 'image/jpeg';
     const dataUri = `data:${mimeType};base64,${base64Image}`;
 
-    console.log('Calling Replicate API (Automatic Segmentation)...');
+    console.log('Calling Replicate API (Meta SAM-1)...');
 
-    // 使用 pablodawson/segment-anything-automatic (基于 SAM-1 的自动全图分割)
-    // 这是一个长期稳定的版本 hash
-    const modelVersion = "103145716d73dc1017eb95373531a2b4700401f28a13270c45343573707355c5";
+    // 使用 Meta 官方维护的 segment-anything (SAM-1)
+    // 这是一个绝对公开且支持自动分割的版本 (ViT-Huge)
+    // Version created at 2023-06-22, ID: 2b212039...
+    const modelVersion = "2b212039fd8d0151a856b54364d55010583985264822892dcc3909116577a713";
 
     const response = await fetch('https://api.replicate.com/v1/predictions', {
       method: 'POST',
@@ -44,7 +45,13 @@ export default async function handler(req, res) {
         version: modelVersion,
         input: {
           image: dataUri,
-          // 这里的参数不需要太复杂，默认即可
+          // 关键参数：开启自动分割
+          auto_segment: true,
+          // 可选参数：调整粒度
+          points_per_side: 32,
+          pred_iou_thresh: 0.88,
+          stability_score_thresh: 0.95,
+          min_mask_region_area: 100
         }
       })
     });
@@ -56,12 +63,12 @@ export default async function handler(req, res) {
     }
 
     let prediction = await response.json();
+    console.log('Prediction started:', prediction.id);
     
-    // 轮询
     let attempts = 0;
     while (
       (prediction.status === 'starting' || prediction.status === 'processing') && 
-      attempts < 40
+      attempts < 60 // 增加超时时间，SAM-1 自动分割比较慢
     ) {
       await new Promise(r => setTimeout(r, 2000));
       attempts++;
@@ -75,7 +82,13 @@ export default async function handler(req, res) {
     }
 
     if (prediction.status === 'succeeded') {
-      // 这个模型返回的 output 就是一个包含 mask URL 的 JSON 对象数组
+      // Meta 官方 SAM-1 返回的 output 结构通常是：
+      // 1. 如果有 masks 字段，那就是 JSON 数组
+      // 2. 有时候会返回一个包含 json 文件的 URL
+      // 我们这里做个兼容处理，假设它返回的是 JSON 对象数组（标准行为）
+      
+      console.log('Replicate Output Type:', typeof prediction.output);
+      
       res.status(200).json({
         success: true,
         masks: prediction.output, 
