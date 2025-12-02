@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI 3D 纸雕灯生成器</title>
+    <!-- 引入样式文件 -->
+    <link rel="stylesheet" href="./style.css">
+  </head>
+  <body>
+    <!-- 控制面板：悬浮在左上角 -->
+    <div id="controls">
+      <h2>🛠️ 纸雕灯工坊</h2>
+      
+      <div class="step">
+        <label>1. 上传照片</label>
+        <input type="file" id="fileInput" accept="image/*" />
+      </div>
+
+      <div class="step">
+        <button id="generateBtn">✨ 生成 3D 纸雕</button>
+      </div>
+      
+      <p class="tip">提示：移动鼠标或摇头(需摄像头)可查看视差效果</p>
+    </div>
+
+    <!-- 加载提示 -->
+    <div id="loading">
+      <div class="spinner"></div>
+      <p id="loadingText">正在加载 AI 模型 (首次需下载 40MB)...</p>
+    </div>
+
+    <!-- 3D 画布容器 -->
+    <div id="canvas-container"></div>
+
+    <!-- 引入核心逻辑 (注意 type="module") -->
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,69 @@
+body {
+  margin: 0;
+  overflow: hidden; /* 防止出现滚动条 */
+  background-color: #1a1a1a;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  color: white;
+}
+
+#canvas-container {
+  width: 100vw;
+  height: 100vh;
+  display: block;
+}
+
+#controls {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  width: 280px;
+  background: rgba(30, 30, 30, 0.85);
+  backdrop-filter: blur(10px); /* 毛玻璃效果 */
+  padding: 20px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  z-index: 100;
+}
+
+h2 { margin-top: 0; font-size: 1.2rem; color: #ffd700; }
+
+.step { margin-bottom: 15px; }
+.step label { display: block; margin-bottom: 5px; font-size: 0.9rem; color: #aaa; }
+
+input[type="file"] { font-size: 0.8rem; width: 100%; }
+input[type="range"] { width: 100%; }
+
+button {
+  width: 100%;
+  padding: 10px;
+  background: linear-gradient(45deg, #ff6b6b, #ff8e53);
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+button:active { transform: scale(0.98); }
+
+.tip { font-size: 0.75rem; color: #666; margin-top: 10px; }
+
+/* 加载动画 */
+#loading {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  display: none; /* 默认隐藏 */
+  z-index: 200;
+}
+.spinner {
+  width: 40px; height: 40px;
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #ff6b6b;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 10px;
+}
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
