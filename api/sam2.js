@@ -1,5 +1,6 @@
 import formidable from 'formidable';
 import fs from 'fs';
+import Replicate from 'replicate'; // 引入官方 SDK
 
 export const config = {
   api: {
@@ -28,67 +29,52 @@ export default async function handler(req, res) {
     const mimeType = imageFile.mimetype || 'image/jpeg';
     const dataUri = `data:${mimeType};base64,${base64Image}`;
 
-    console.log('Calling Replicate API (Official SAM-1)...');
+    console.log('Calling Replicate API (Official SDK)...');
 
-    // 这是 Replicate 官方 Python 客户端默认使用的 SAM-1 (ViT-H) Hash
-    // 绝对公开可用
-    const modelVersion = "2b212039fd8d0151a856b54364d55010583985264822892dcc3909116577a713";
-
-    const response = await fetch('https://api.replicate.com/v1/predictions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Token ${process.env.REPLICATE_API_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        version: modelVersion,
-        input: {
-          image: dataUri,
-          // 这个参数对于自动分割至关重要，必须开启
-          auto_segment: true
-        }
-      })
+    // 初始化 Replicate SDK
+    // 它会自动读取 process.env.REPLICATE_API_TOKEN
+    const replicate = new Replicate({
+      auth: process.env.REPLICATE_API_TOKEN,
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Replicate Error Details:', errorText);
-      throw new Error(`Replicate API returned ${response.status}: ${errorText}`);
-    }
-
-    let prediction = await response.json();
-    
-    // 轮询
-    let attempts = 0;
-    while (
-      (prediction.status === 'starting' || prediction.status === 'processing') && 
-      attempts < 60
-    ) {
-      await new Promise(r => setTimeout(r, 2000));
-      attempts++;
-      const statusRes = await fetch(
-        `https://api.replicate.com/v1/predictions/${prediction.id}`,
-        {
-          headers: { 'Authorization': `Token ${process.env.REPLICATE_API_TOKEN}` }
+    // 使用你找到的最新 SAM-2 Hash
+    const output = await replicate.run(
+      "meta/sam-2:fe97b453a6455861e3bac769b441ca1f1086110da7466dbb65cf1eecfd60dc83",
+      {
+        input: {
+          image: dataUri,
+          // ⚠️ 注意：官方 SAM-2 的 "自动分割" 并不叫 auto_segment
+          // 如果你不传任何 prompt (box, point)，它默认可能不会返回 mask 数组
+          // 但既然我们要试错，先只传 image 试试它的默认行为
+          // 如果报错 "missing prompts"，我们再换回之前的 sam-1
         }
-      );
-      prediction = await statusRes.json();
+      }
+    );
+
+    console.log('Replicate Output:', output);
+
+    // SAM-2 的输出结构可能变了，通常是：
+    // { combined_mask: "url...", masks: ["url1", "url2"...] }
+    // 或者直接返回 masks 数组
+    
+    // 容错处理：找到任何看起来像 mask 数组的东西
+    let masks = [];
+    if (Array.isArray(output)) {
+      masks = output;
+    } else if (output && Array.isArray(output.masks)) {
+      masks = output.masks;
+    } else if (output && output.segmentation_masks) {
+       masks = output.segmentation_masks;
+    } else if (output) {
+       // 如果只返回了一个对象，可能只有一个结果，硬塞进数组
+       masks = [output];
     }
 
-    if (prediction.status === 'succeeded') {
-      // SAM-1 auto_segment=true 返回的 output 格式：
-      // 它通常是一个 JSON 对象，里面可能包含 "masks" 数组，或者是一个文件 URL
-      // 我们直接把整个 output 返回去，让前端打印出来看看结构
-      console.log('SAM Output:', JSON.stringify(prediction.output));
-      
-      res.status(200).json({
-        success: true,
-        masks: prediction.output, 
-        originalImage: base64Image
-      });
-    } else {
-      res.status(500).json({ error: 'Failed', details: prediction });
-    }
+    res.status(200).json({
+      success: true,
+      masks: masks, 
+      originalImage: base64Image
+    });
 
   } catch (err) {
     console.error('API Error:', err);

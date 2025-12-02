@@ -11,7 +11,8 @@
   "dependencies": {
     "@mediapipe/face_mesh": "^0.4.1633559619",
     "three": "^0.164.1",
-    "formidable": "^3.5.1"
+    "formidable": "^3.5.1",
+    "replicate": "^0.25.2" 
   },
   "devDependencies": {
     "vite": "^5.2.0"
