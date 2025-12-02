@@ -3,20 +3,26 @@ import * as THREE from 'three';
 // 全局变量
 let scene, camera, renderer;
 let headX = 0, headY = 0;
-let currentOriginalImageBase64 = null; // 保存原图
-let globalLayers = []; // 存储当前的图层数据
+let currentOriginalImageBase64 = null; // 保存原图数据
+let globalLayers = []; // 存储当前的图层数据列表
 
-// ================= 1. 初始化 Three.js =================
+// ================= 1. 初始化 Three.js 场景 =================
 function initThreeJS() {
   scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x000000, 0.01);
+  // 使用很淡的雾，或者干脆去掉，防止颜色被干扰
+  // scene.fog = new THREE.FogExp2(0x000000, 0.01);
+
   camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
   camera.position.z = 5;
+
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
+  // 启用物理正确的颜色空间
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
   document.getElementById('canvas-container').appendChild(renderer.domElement);
   
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+  // 灯光设置 (虽然 BasicMaterial 不受光照影响，但留着备用)
+  const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
   scene.add(ambientLight);
   const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
   dirLight.position.set(5, 5, 5);
@@ -32,6 +38,7 @@ function initThreeJS() {
 
 function animate() {
   requestAnimationFrame(animate);
+  // 视差效果：头部移动控制相机
   camera.position.x += (headX * 2 - camera.position.x) * 0.1;
   camera.position.y += (headY * 2 - camera.position.y) * 0.1;
   camera.lookAt(0, 0, 0);
@@ -40,11 +47,11 @@ function animate() {
 
 initThreeJS();
 
-// ================= 2. 摄像头追踪 =================
+// ================= 2. 摄像头头部追踪 =================
 setTimeout(() => {
   if (window.FaceMesh) initFaceTracking(window.FaceMesh);
   else {
-    // 降级处理
+    // 降级处理：无摄像头时用鼠标控制
     document.addEventListener('mousemove', (e) => {
       headX = (e.clientX / window.innerWidth - 0.5) * 2;
       headY = -(e.clientY / window.innerHeight - 0.5) * 2;
@@ -59,7 +66,7 @@ function initFaceTracking(FaceMeshClass) {
 
   navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
     .then((stream) => { video.srcObject = stream; })
-    .catch(e => console.warn("No Camera"));
+    .catch(e => console.warn("No Camera, using mouse fallback"));
 
   const faceMesh = new FaceMeshClass({
     locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`,
@@ -79,7 +86,7 @@ function initFaceTracking(FaceMeshClass) {
   video.onloadeddata = () => processFrame();
 }
 
-// ================= 3. 图层管理逻辑 =================
+// ================= 3. 图层管理逻辑 (拖拽、合并、列表渲染) =================
 function renderLayerList() {
   const listEl = document.getElementById('layer-list');
   listEl.innerHTML = '';
@@ -90,7 +97,6 @@ function renderLayerList() {
     li.draggable = true;
     li.dataset.index = index;
     
-    // 缩略图防错处理
     const thumbUrl = layer.maskUrl || '';
     
     li.innerHTML = `
@@ -133,14 +139,16 @@ async function handleDrop(e) {
   const targetLayer = globalLayers[targetIndex];
   const sourceLayer = globalLayers[draggedIndex];
 
-  // 简单Loading提示
-  this.style.opacity = '0.5';
+  this.style.opacity = '0.5'; // 视觉反馈
   
+  // 合并 Mask
   const newMaskUrl = await mergeMaskImages(targetLayer.maskUrl, sourceLayer.maskUrl);
   targetLayer.maskUrl = newMaskUrl;
   targetLayer.isMerged = true;
   
+  // 删除源图层
   globalLayers.splice(draggedIndex, 1);
+  // 重新渲染
   renderLayerList();
 }
 
@@ -162,17 +170,17 @@ function mergeMaskImages(url1, url2) {
         resolve(canvas.toDataURL('image/png'));
       };
     };
-    // 错误处理
     img1.onerror = () => resolve(url2);
   });
 }
 
+// 绑定“更新 3D”按钮
 document.getElementById('update3DBtn').addEventListener('click', () => {
   if (!currentOriginalImageBase64) return;
   create3DFromLayers(globalLayers, currentOriginalImageBase64);
 });
 
-// ================= 4. API 调用 (核心修复) =================
+// ================= 4. API 调用逻辑 =================
 const generateBtn = document.getElementById('generateBtn');
 generateBtn.addEventListener('click', async () => {
   const fileInput = document.getElementById('fileInput');
@@ -196,31 +204,23 @@ generateBtn.addEventListener('click', async () => {
       let rawMasks = data.masks;
       let finalMasks = [];
 
-      console.log('Backend return:', rawMasks);
-
-      // === 核心修复逻辑 ===
-      // 1. 如果是数组，且数组里包裹着对象（Replicate SDK 的行为）
+      // 核心解析逻辑：拆解各种可能的返回格式
       if (Array.isArray(rawMasks) && rawMasks.length === 1 && rawMasks[0].individual_masks) {
         finalMasks = rawMasks[0].individual_masks;
       }
-      // 2. 如果直接就是对象
       else if (rawMasks && rawMasks.individual_masks) {
         finalMasks = rawMasks.individual_masks;
       }
-      // 3. 如果本身就是 URL 数组
       else if (Array.isArray(rawMasks)) {
         finalMasks = rawMasks;
       }
-      // 4. 如果只是单个 mask URL
       else if (rawMasks) {
         finalMasks = [rawMasks];
       }
 
-      if (finalMasks.length === 0) throw new Error("未识别到任何 mask");
+      if (finalMasks.length === 0) throw new Error("未识别到任何图层");
 
-      console.log('Parsed masks count:', finalMasks.length);
-
-      // 初始化全局图层 (不做反转，让大背景在列表最上面)
+      // 初始化全局图层列表
       globalLayers = finalMasks.map((url, i) => ({
         id: i,
         maskUrl: url,
@@ -239,15 +239,16 @@ generateBtn.addEventListener('click', async () => {
   }
 });
 
+document.getElementById('fileInput').addEventListener('change', () => generateBtn.click());
 
-// ================= 5. 3D 生成 =================
+// ================= 5. 3D 生成 (修复黑色问题版) =================
 function create3DFromLayers(layers, originalBase64) {
+  // 清空旧物体
   while(scene.children.length > 0) scene.remove(scene.children[0]);
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+
+  // 重新添加灯光 (虽然 BasicMaterial 不用灯光，但为了阴影层我们加上)
+  const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
   scene.add(ambientLight);
-  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-  dirLight.position.set(5, 5, 5);
-  scene.add(dirLight);
 
   const originalImg = new Image();
   originalImg.src = originalBase64.startsWith('data') ? originalBase64 : `data:image/jpeg;base64,${originalBase64}`;
@@ -260,11 +261,6 @@ function create3DFromLayers(layers, originalBase64) {
     baseCtx.drawImage(originalImg, 0, 0, w, h);
     const originalData = baseCtx.getImageData(0, 0, w, h);
 
-    // 渲染逻辑：
-    // 列表里的第一个元素(index 0) 是大背景，应该放在最后面 (Z 最小)
-    // 列表里的最后一个元素 是细节，应该放在最前面 (Z 最大)
-    // 所以我们不需要 reverse，直接按 index 映射 Z 即可
-    
     layers.forEach((layer, index) => {
       const maskImg = new Image();
       maskImg.crossOrigin = 'Anonymous';
@@ -274,39 +270,55 @@ function create3DFromLayers(layers, originalBase64) {
         const cvs = document.createElement('canvas');
         cvs.width = w; cvs.height = h;
         const ctx = cvs.getContext('2d');
+        
+        // 1. 画 Mask
         ctx.drawImage(maskImg, 0, 0, w, h);
         const mData = ctx.getImageData(0, 0, w, h);
         const lData = ctx.createImageData(w, h);
         
+        // 2. 像素处理：只取白色 Mask 区域的原图像素
         let hasContent = false;
         for(let i=0; i<mData.data.length; i+=4) {
-           // 只要不是纯黑或纯透明，就算有内容
-           if(mData.data[i] > 30 || mData.data[i+3] < 10) {
-             lData.data[i] = originalData.data[i];
-             lData.data[i+1] = originalData.data[i+1];
-             lData.data[i+2] = originalData.data[i+2];
-             lData.data[i+3] = 255;
+           // 阈值判定：Mask 像素是否足够白 (前景)
+           if(mData.data[i] > 100) {
+             lData.data[i] = originalData.data[i];     // R
+             lData.data[i+1] = originalData.data[i+1]; // G
+             lData.data[i+2] = originalData.data[i+2]; // B
+             lData.data[i+3] = 255;                    // A
              hasContent = true;
            } else {
-             lData.data[i+3] = 0;
+             lData.data[i+3] = 0; // 透明
            }
         }
+        
+        // 如果全透明则不创建 Mesh
         if(!hasContent) return;
+        
         ctx.putImageData(lData, 0, 0);
         
         const tex = new THREE.CanvasTexture(cvs);
         tex.colorSpace = THREE.SRGBColorSpace;
-        const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide, alphaTest: 0.1 });
+        
+        // 3. 使用 BasicMaterial 避免光照导致的黑色问题
+        const mat = new THREE.MeshBasicMaterial({ 
+            map: tex, 
+            transparent: true, 
+            side: THREE.DoubleSide, 
+            alphaTest: 0.1 
+        });
+        
         const geo = new THREE.PlaneGeometry(4, 4);
         const mesh = new THREE.Mesh(geo, mat);
         
-        // Z 轴间隔：Index 越大越靠前 (0.3 间距)
+        // Z 轴间隔
         mesh.position.z = index * 0.3;
         
-        const shadowMat = new THREE.MeshBasicMaterial({ color: 0, transparent: true, opacity: 0.5 });
+        // 4. 添加阴影层
+        const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.4 });
         const shadow = new THREE.Mesh(geo, shadowMat);
-        shadow.position.z = mesh.position.z - 0.1;
-        shadow.position.x = 0.05; shadow.position.y = -0.05;
+        shadow.position.z = mesh.position.z - 0.05; // 紧贴在后
+        shadow.position.x = 0.03; 
+        shadow.position.y = -0.03;
         
         scene.add(shadow);
         scene.add(mesh);
